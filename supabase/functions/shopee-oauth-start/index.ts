@@ -16,9 +16,13 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  // Generate and store state for CSRF protection
   const state = crypto.randomUUID();
   await storeOAuthState(state, 'shopee');
+
+  // Shopee does not relay an arbitrary `state` param through their OAuth redirect.
+  // The standard workaround is to append the state to the redirect_uri so Shopee
+  // echoes it back as part of the callback URL query string.
+  const redirectWithState = `${creds.redirect_uri}${creds.redirect_uri.includes('?') ? '&' : '?'}state=${state}`;
 
   const path = '/api/v2/shop/auth_partner';
   const timestamp = Math.floor(Date.now() / 1000);
@@ -27,14 +31,9 @@ Deno.serve(async (req: Request) => {
 
   const authorizeUrl = new URL(`${HOST}${path}`);
   authorizeUrl.searchParams.set('partner_id', creds.client_id);
-  authorizeUrl.searchParams.set('redirect', creds.redirect_uri);
+  authorizeUrl.searchParams.set('redirect', redirectWithState);
   authorizeUrl.searchParams.set('timestamp', String(timestamp));
   authorizeUrl.searchParams.set('sign', sign);
-  // Pass state in redirect URL so Shopee returns it in the callback
-  // Shopee doesn't officially pass state through; we embed it in the redirect URI instead
-  // by appending it as a query param in redirect_uri (pre-registered with trailing ?state=)
-  // This is the standard workaround for Shopee's OAuth implementation.
-  // The actual state validation occurs in shopee-oauth-callback.
 
   return new Response(null, {
     status: 302,

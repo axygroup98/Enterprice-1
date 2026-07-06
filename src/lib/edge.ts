@@ -15,10 +15,18 @@ export async function callEdgeFunction<T = unknown>(name: string, body?: Record<
     headers: { ...authHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify(body ?? {}),
   });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Edge Function '${name}' retornou ${res.status}${text ? ': ' + text.slice(0, 200) : ''}`);
+  }
   return (await res.json()) as T;
 }
 
 export async function getEdgeFunction<T = unknown>(name: string): Promise<T> {
   const res = await fetch(edgeFunctionUrl(name), { headers: authHeaders() });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Edge Function '${name}' retornou ${res.status}${text ? ': ' + text.slice(0, 200) : ''}`);
+  }
   return (await res.json()) as T;
 }

@@ -78,15 +78,15 @@ export interface ProductMonitor {
   shopeeStock: number | null;
   hasPhoto: boolean;
   hasDescription: boolean;
-  hasVideo: boolean;
+  hasVideo: boolean | null;
   mlStatus: 'active' | 'paused' | 'closed' | 'not_listed' | null;
   shopeeStatus: 'active' | 'paused' | 'closed' | 'not_listed' | null;
 }
 
 export interface OrderMonitor {
   id: string;
-  marketplace: 'mercadolivre' | 'shopee';
-  status: 'new' | 'paid' | 'awaiting_nf' | 'separating' | 'shipped' | 'delivered' | 'stopped';
+  marketplace: 'mercadolivre' | 'shopee' | 'bling';
+  status: 'new' | 'paid' | 'awaiting_nf' | 'separating' | 'shipped' | 'delivered' | 'stopped' | 'processing' | 'cancelled' | 'completed';
   buyerName: string;
   total: number;
   createdAt: string;

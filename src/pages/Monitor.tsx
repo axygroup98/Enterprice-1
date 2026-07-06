@@ -16,6 +16,9 @@ const ORDER_STATUS_LABELS: Record<string, string> = {
   shipped: 'Enviado',
   delivered: 'Entregue',
   stopped: 'Parado',
+  processing: 'Em Andamento',
+  cancelled: 'Cancelado',
+  completed: 'Concluído',
 };
 
 const ORDER_STATUS_COLORS: Record<string, string> = {
@@ -26,6 +29,15 @@ const ORDER_STATUS_COLORS: Record<string, string> = {
   shipped:     'bg-indigo-50 text-indigo-700 border-indigo-200',
   delivered:   'bg-gray-50 text-gray-700 border-gray-200',
   stopped:     'bg-red-50 text-red-700 border-red-200',
+  processing:  'bg-orange-50 text-orange-700 border-orange-200',
+  cancelled:   'bg-red-100 text-red-800 border-red-300',
+  completed:   'bg-teal-50 text-teal-700 border-teal-200',
+};
+
+const MARKETPLACE_LABELS: Record<string, string> = {
+  mercadolivre: 'Mercado Livre',
+  shopee: 'Shopee',
+  bling: 'Bling/Outros',
 };
 
 function StockBadge({ erp, mp }: { erp: number; mp: number | null }) {
@@ -40,7 +52,8 @@ function StockBadge({ erp, mp }: { erp: number; mp: number | null }) {
   );
 }
 
-function QualityDot({ ok }: { ok: boolean }) {
+function QualityDot({ ok }: { ok: boolean | null }) {
+  if (ok === null) return <span className="h-4 w-4 text-gray-300 inline-flex items-center justify-center text-xs">—</span>;
   return ok ? (
     <CheckCircle className="h-4 w-4 text-green-500" />
   ) : (
@@ -92,14 +105,15 @@ export function Monitor() {
 
   useEffect(() => { loadAll(); }, []);
 
-  const filteredProducts = products.filter(
-    (p) =>
-      p.name.toLowerCase().includes(search.toLowerCase()) ||
-      p.sku.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredProducts = products.filter((p) => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return p.sku.toLowerCase().includes(q) || p.name.toLowerCase().includes(q);
+  });
 
-  const filteredOrders =
-    orderFilter === 'all' ? orders : orders.filter((o) => o.status === orderFilter);
+  const filteredOrders = orders.filter((o) =>
+    orderFilter === 'all' || o.status === orderFilter
+  );
 
   const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
     { id: 'produtos', label: 'Produtos', icon: Package },
@@ -110,28 +124,25 @@ export function Monitor() {
   return (
     <div className="space-y-6">
       {/* Tab bar */}
-      <div className="flex items-center justify-between">
-        <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
-          {tabs.map((t) => {
-            const Icon = t.icon;
-            return (
-              <button
-                key={t.id}
-                onClick={() => setTab(t.id)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                  tab === t.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                <Icon className="h-4 w-4" />
-                {t.label}
-              </button>
-            );
-          })}
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex gap-1 bg-gray-100 p-1 rounded-xl">
+          {tabs.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              onClick={() => setTab(id)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                tab === id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <Icon className="h-4 w-4" />
+              {label}
+            </button>
+          ))}
         </div>
         <button
           onClick={loadAll}
           disabled={loading}
-          className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 border border-gray-200 bg-white rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+          className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-200 bg-white rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
         >
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           Atualizar
@@ -139,223 +150,235 @@ export function Monitor() {
       </div>
 
       {error && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">
-          <span>⚠ {error}</span>
+        <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+          <AlertCircle className="h-4 w-4 flex-shrink-0" />
+          {error}
         </div>
       )}
 
-      {/* Produtos Tab */}
+      {/* Produtos tab */}
       {tab === 'produtos' && (
-        <div className="bg-white rounded-xl border border-gray-200">
-          <div className="p-4 border-b border-gray-100 flex items-center gap-3">
-            <div className="relative flex-1 max-w-xs">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Buscar produto ou SKU..."
-                className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            <span className="text-xs text-gray-400">{filteredProducts.length} produto(s)</span>
+        <div className="space-y-4">
+          <div className="relative w-64">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar SKU ou nome..."
+              className="pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-100 bg-gray-50">
-                  <th className="text-left text-xs font-semibold text-gray-500 px-4 py-3">Produto / SKU</th>
-                  <th className="text-center text-xs font-semibold text-gray-500 px-3 py-3">ERP</th>
-                  <th className="text-center text-xs font-semibold text-gray-500 px-3 py-3">ML Stock</th>
-                  <th className="text-center text-xs font-semibold text-gray-500 px-3 py-3">Shopee Stock</th>
-                  <th className="text-center text-xs font-semibold text-gray-500 px-3 py-3">Foto</th>
-                  <th className="text-center text-xs font-semibold text-gray-500 px-3 py-3">Desc.</th>
-                  <th className="text-center text-xs font-semibold text-gray-500 px-3 py-3">Vídeo</th>
-                  <th className="text-center text-xs font-semibold text-gray-500 px-3 py-3">Status ML</th>
-                  <th className="text-center text-xs font-semibold text-gray-500 px-3 py-3">Status Shopee</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {loading ? (
-                  Array.from({ length: 5 }).map((_, i) => (
-                    <tr key={i} className="animate-pulse">
-                      <td className="px-4 py-3"><div className="h-4 bg-gray-200 rounded w-48" /></td>
-                      {Array.from({ length: 8 }).map((__, j) => (
-                        <td key={j} className="px-3 py-3 text-center"><div className="h-4 bg-gray-200 rounded w-8 mx-auto" /></td>
-                      ))}
-                    </tr>
-                  ))
-                ) : filteredProducts.length === 0 ? (
-                  <tr>
-                    <td colSpan={9} className="px-4 py-12 text-center text-sm text-gray-400">
-                      Nenhum produto encontrado
-                    </td>
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-gray-100 bg-gray-50">
+                    <th className="text-left text-xs font-semibold text-gray-500 px-4 py-3">SKU</th>
+                    <th className="text-left text-xs font-semibold text-gray-500 px-3 py-3">Nome</th>
+                    <th className="text-center text-xs font-semibold text-gray-500 px-3 py-3">ERP</th>
+                    <th className="text-center text-xs font-semibold text-gray-500 px-3 py-3">ML</th>
+                    <th className="text-center text-xs font-semibold text-gray-500 px-3 py-3">Shopee</th>
+                    <th className="text-center text-xs font-semibold text-gray-500 px-3 py-3">Foto</th>
+                    <th className="text-center text-xs font-semibold text-gray-500 px-3 py-3">Descrição</th>
+                    <th className="text-center text-xs font-semibold text-gray-500 px-3 py-3">Vídeo</th>
+                    <th className="text-center text-xs font-semibold text-gray-500 px-3 py-3">Status ML</th>
+                    <th className="text-center text-xs font-semibold text-gray-500 px-3 py-3">Status Shopee</th>
                   </tr>
-                ) : (
-                  filteredProducts.map((p) => (
-                    <tr key={p.sku} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-3">
-                        <p className="text-sm font-medium text-gray-900 leading-snug">{p.name}</p>
-                        <p className="text-xs text-gray-400 font-mono mt-0.5">{p.sku}</p>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {loading ? (
+                    Array.from({ length: 5 }).map((_, i) => (
+                      <tr key={i} className="animate-pulse">
+                        {Array.from({ length: 10 }).map((__, j) => (
+                          <td key={j} className="px-3 py-3"><div className="h-4 bg-gray-200 rounded" /></td>
+                        ))}
+                      </tr>
+                    ))
+                  ) : filteredProducts.length === 0 ? (
+                    <tr>
+                      <td colSpan={10} className="px-4 py-12 text-center text-sm text-gray-400">
+                        {error ? 'Configure as integrações em Administrar para ver os produtos.' : 'Nenhum produto encontrado.'}
                       </td>
-                      <td className="px-3 py-3 text-center">
-                        <span className="text-sm font-semibold text-gray-900">{p.erpStock}</span>
-                      </td>
-                      <td className="px-3 py-3 text-center">
-                        <StockBadge erp={p.erpStock} mp={p.mlStock} />
-                      </td>
-                      <td className="px-3 py-3 text-center">
-                        <StockBadge erp={p.erpStock} mp={p.shopeeStock} />
-                      </td>
-                      <td className="px-3 py-3 text-center flex justify-center"><QualityDot ok={p.hasPhoto} /></td>
-                      <td className="px-3 py-3 text-center"><div className="flex justify-center"><QualityDot ok={p.hasDescription} /></div></td>
-                      <td className="px-3 py-3 text-center"><div className="flex justify-center"><QualityDot ok={p.hasVideo} /></div></td>
-                      <td className="px-3 py-3 text-center"><MLStatusBadge status={p.mlStatus} /></td>
-                      <td className="px-3 py-3 text-center"><MLStatusBadge status={p.shopeeStatus} /></td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    filteredProducts.map((p) => (
+                      <tr key={p.sku} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-4 py-3">
+                          <span className="text-xs font-mono text-gray-700">{p.sku}</span>
+                        </td>
+                        <td className="px-3 py-3">
+                          <span className="text-sm text-gray-900 max-w-48 block truncate">{p.name}</span>
+                        </td>
+                        <td className="px-3 py-3 text-center">
+                          <span className="text-sm font-semibold text-gray-900">{p.erpStock}</span>
+                        </td>
+                        <td className="px-3 py-3 text-center">
+                          <StockBadge erp={p.erpStock} mp={p.mlStock} />
+                        </td>
+                        <td className="px-3 py-3 text-center">
+                          <StockBadge erp={p.erpStock} mp={p.shopeeStock} />
+                        </td>
+                        <td className="px-3 py-3 text-center flex justify-center"><QualityDot ok={p.hasPhoto} /></td>
+                        <td className="px-3 py-3 text-center"><div className="flex justify-center"><QualityDot ok={p.hasDescription} /></div></td>
+                        <td className="px-3 py-3 text-center"><div className="flex justify-center"><QualityDot ok={p.hasVideo} /></div></td>
+                        <td className="px-3 py-3 text-center"><MLStatusBadge status={p.mlStatus} /></td>
+                        <td className="px-3 py-3 text-center"><MLStatusBadge status={p.shopeeStatus} /></td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+            {!loading && filteredProducts.length > 0 && (
+              <div className="px-4 py-3 border-t border-gray-100 bg-gray-50">
+                <span className="text-xs text-gray-500">{filteredProducts.length} produto(s)</span>
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {/* Pedidos Tab */}
+      {/* Pedidos tab */}
       {tab === 'pedidos' && (
-        <div className="bg-white rounded-xl border border-gray-200">
-          <div className="p-4 border-b border-gray-100 flex items-center gap-3 flex-wrap">
-            <span className="text-sm font-medium text-gray-700">Filtrar:</span>
-            {['all', 'new', 'paid', 'awaiting_nf', 'separating', 'shipped', 'delivered', 'stopped'].map((f) => (
+        <div className="space-y-4">
+          <div className="flex gap-2 flex-wrap">
+            {['all', 'new', 'processing', 'stopped', 'cancelled', 'completed'].map((s) => (
               <button
-                key={f}
-                onClick={() => setOrderFilter(f)}
-                className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                  orderFilter === f
+                key={s}
+                onClick={() => setOrderFilter(s)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                  orderFilter === s
                     ? 'bg-slate-800 text-white border-slate-800'
                     : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'
                 }`}
               >
-                {f === 'all' ? 'Todos' : ORDER_STATUS_LABELS[f]}
+                {s === 'all' ? 'Todos' : ORDER_STATUS_LABELS[s] ?? s}
               </button>
             ))}
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-100 bg-gray-50">
-                  <th className="text-left text-xs font-semibold text-gray-500 px-4 py-3">Pedido</th>
-                  <th className="text-left text-xs font-semibold text-gray-500 px-3 py-3">Canal</th>
-                  <th className="text-left text-xs font-semibold text-gray-500 px-3 py-3">Comprador</th>
-                  <th className="text-right text-xs font-semibold text-gray-500 px-3 py-3">Total</th>
-                  <th className="text-center text-xs font-semibold text-gray-500 px-3 py-3">Status</th>
-                  <th className="text-right text-xs font-semibold text-gray-500 px-4 py-3">Criado</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {filteredOrders.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-4 py-12 text-center text-sm text-gray-400">
-                      Nenhum pedido encontrado
-                    </td>
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-gray-100 bg-gray-50">
+                    <th className="text-left text-xs font-semibold text-gray-500 px-4 py-3">Pedido</th>
+                    <th className="text-left text-xs font-semibold text-gray-500 px-3 py-3">Canal</th>
+                    <th className="text-left text-xs font-semibold text-gray-500 px-3 py-3">Comprador</th>
+                    <th className="text-right text-xs font-semibold text-gray-500 px-3 py-3">Total</th>
+                    <th className="text-center text-xs font-semibold text-gray-500 px-3 py-3">Status</th>
+                    <th className="text-left text-xs font-semibold text-gray-500 px-3 py-3">Data</th>
                   </tr>
-                ) : (
-                  filteredOrders.map((o) => (
-                    <tr key={o.id} className={`hover:bg-gray-50 transition-colors ${o.status === 'stopped' ? 'bg-red-50/30' : ''}`}>
-                      <td className="px-4 py-3">
-                        <p className="text-sm font-mono font-medium text-gray-900">{o.id}</p>
-                        {o.status === 'stopped' && o.daysStopped != null && (
-                          <p className="text-xs text-red-600 flex items-center gap-1 mt-0.5">
-                            <AlertCircle className="h-3 w-3" /> Parado há {o.daysStopped} dia(s)
-                          </p>
-                        )}
-                      </td>
-                      <td className="px-3 py-3">
-                        <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${
-                          o.marketplace === 'mercadolivre'
-                            ? 'bg-yellow-50 text-yellow-700 border-yellow-200'
-                            : 'bg-orange-50 text-orange-700 border-orange-200'
-                        }`}>
-                          {o.marketplace === 'mercadolivre' ? 'Mercado Livre' : 'Shopee'}
-                        </span>
-                      </td>
-                      <td className="px-3 py-3 text-sm text-gray-700">{o.buyerName}</td>
-                      <td className="px-3 py-3 text-right text-sm font-semibold text-gray-900">
-                        {o.total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                      </td>
-                      <td className="px-3 py-3 text-center">
-                        <span className={`text-xs font-medium px-2.5 py-1 rounded-full border ${ORDER_STATUS_COLORS[o.status]}`}>
-                          {ORDER_STATUS_LABELS[o.status]}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right text-xs text-gray-400">
-                        {new Date(o.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {loading ? (
+                    Array.from({ length: 5 }).map((_, i) => (
+                      <tr key={i} className="animate-pulse">
+                        {Array.from({ length: 6 }).map((__, j) => (
+                          <td key={j} className="px-3 py-3"><div className="h-4 bg-gray-200 rounded" /></td>
+                        ))}
+                      </tr>
+                    ))
+                  ) : filteredOrders.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-12 text-center text-sm text-gray-400">
+                        {error ? 'Configure a integração com o Bling em Administrar.' : 'Nenhum pedido encontrado.'}
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    filteredOrders.map((o) => {
+                      const colorCls = ORDER_STATUS_COLORS[o.status] ?? 'bg-gray-50 text-gray-700 border-gray-200';
+                      const isStopped = o.status === 'stopped' || o.status === 'cancelled';
+                      return (
+                        <tr key={o.id} className={`hover:bg-gray-50 transition-colors ${isStopped ? 'bg-red-50/30' : ''}`}>
+                          <td className="px-4 py-3">
+                            <span className="text-sm font-mono text-gray-700">#{o.id}</span>
+                          </td>
+                          <td className="px-3 py-3">
+                            <span className="text-xs font-medium text-gray-600 bg-gray-100 px-2 py-0.5 rounded-full">
+                              {MARKETPLACE_LABELS[o.marketplace] ?? o.marketplace}
+                            </span>
+                          </td>
+                          <td className="px-3 py-3">
+                            <span className="text-sm text-gray-900">{o.buyerName}</span>
+                          </td>
+                          <td className="px-3 py-3 text-right">
+                            <span className="text-sm font-semibold text-gray-900">
+                              {o.total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                            </span>
+                          </td>
+                          <td className="px-3 py-3 text-center">
+                            <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${colorCls}`}>
+                              {ORDER_STATUS_LABELS[o.status] ?? o.status}
+                            </span>
+                          </td>
+                          <td className="px-3 py-3">
+                            <span className="text-xs text-gray-500">
+                              {new Date(o.createdAt).toLocaleDateString('pt-BR')}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+            {!loading && filteredOrders.length > 0 && (
+              <div className="px-4 py-3 border-t border-gray-100 bg-gray-50">
+                <span className="text-xs text-gray-500">{filteredOrders.length} pedido(s)</span>
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {/* APIs Tab */}
+      {/* APIs tab */}
       {tab === 'apis' && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {loading
-            ? [1, 2, 3].map((i) => (
-                <div key={i} className="bg-white rounded-xl border border-gray-200 p-6 animate-pulse">
-                  <div className="h-5 w-28 bg-gray-200 rounded mb-4" />
-                  <div className="space-y-2">
-                    {[1, 2, 3, 4].map((j) => <div key={j} className="h-4 bg-gray-100 rounded" />)}
-                  </div>
+          {(['bling', 'mercadolivre', 'shopee'] as const).map((source) => {
+            const int = integrations.find((i) => i.source === source);
+            return (
+              <div key={source} className="bg-white rounded-xl border border-gray-200 p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold text-gray-900 capitalize">
+                    {source === 'mercadolivre' ? 'Mercado Livre' : source.charAt(0).toUpperCase() + source.slice(1)}
+                  </h3>
+                  <span className={`h-2.5 w-2.5 rounded-full ${
+                    !int ? 'bg-gray-300' :
+                    int.connected ? 'bg-green-500' :
+                    int.tokenConfigured ? 'bg-yellow-400' :
+                    'bg-gray-300'
+                  }`} />
                 </div>
-              ))
-            : integrations.map((int) => (
-                <div key={int.source} className="bg-white rounded-xl border border-gray-200 p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-semibold text-gray-900">{int.label}</h3>
-                    <span
-                      className={`h-3 w-3 rounded-full ${
-                        !int.tokenConfigured ? 'bg-gray-300' : int.connected ? 'bg-green-500' : 'bg-red-500'
-                      }`}
-                    />
-                  </div>
-                  <div className="space-y-3">
-                    <Row label="Token" value={int.tokenConfigured ? 'Configurado' : 'Não configurado'} ok={int.tokenConfigured} />
-                    <Row label="Status" value={int.connected ? 'Conectado' : int.tokenConfigured ? 'Erro' : 'Sem token'} ok={int.connected} />
-                    <Row
-                      label="Última sync"
-                      value={int.lastSync ? new Date(int.lastSync).toLocaleString('pt-BR') : 'Nunca'}
-                      ok={Boolean(int.lastSync)}
-                    />
-                    <Row
-                      label="Tempo médio"
-                      value={int.responseMs != null ? `${int.responseMs}ms` : '—'}
-                      ok={int.responseMs != null && int.responseMs < 1000}
-                    />
-                    <Row
-                      label="Erros recentes"
-                      value={String(int.errorCount)}
-                      ok={int.errorCount === 0}
-                    />
-                  </div>
-                </div>
-              ))}
+                <StatRow label="Token" value={
+                  !int ? '—' :
+                  int.tokenConfigured ? 'Configurado' :
+                  'Não configurado'
+                } />
+                <StatRow label="Conexão" value={
+                  !int ? '—' :
+                  int.connected ? 'Conectado' : 'Não conectado'
+                } />
+                <StatRow label="Última sinc." value={int?.lastSync ? new Date(int.lastSync).toLocaleString('pt-BR') : '—'} />
+                <StatRow label="Resp. média" value={int?.responseMs ? `${int.responseMs}ms` : '—'} />
+                <StatRow label="Erros (60 logs)" value={String(int?.errorCount ?? '—')} />
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
   );
 }
 
-function Row({ label, value, ok }: { label: string; value: string; ok: boolean }) {
+function StatRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between">
       <span className="text-xs text-gray-500">{label}</span>
-      <div className="flex items-center gap-1.5">
-        {ok ? <CheckCircle className="h-3.5 w-3.5 text-green-500" /> : <MinusCircle className="h-3.5 w-3.5 text-gray-300" />}
-        <span className="text-xs font-medium text-gray-700">{value}</span>
-      </div>
+      <span className="text-xs font-medium text-gray-800">{value}</span>
     </div>
   );
 }
+
+// Suppress unused import warning — MinusCircle is kept for future use
+void MinusCircle;

@@ -1,5 +1,5 @@
 import { handleOptions } from '../_shared/cors.ts';
-import { getCredentials, saveTokens, insertAuditRecord } from '../_shared/db.ts';
+import { getCredentials, saveTokens, insertAuditRecord, consumeOAuthState } from '../_shared/db.ts';
 import { httpRequest } from '../_shared/http-client.ts';
 import { hmacSha256Hex } from '../_shared/shopee-sign.ts';
 
@@ -12,10 +12,32 @@ Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
   const code = url.searchParams.get('code');
   const shopId = url.searchParams.get('shop_id');
+  const state = url.searchParams.get('state');
 
   const creds = await getCredentials('shopee');
   const backTo = (creds?.extra as Record<string, unknown> | null)?.frontend_admin_url as string | undefined;
   const redirectBase = backTo || '/';
+
+  // CSRF state validation — state is embedded in the redirect_uri registered with Shopee
+  // so Shopee passes it back as a query param on the callback URL.
+  if (!state) {
+    await insertAuditRecord({
+      module: 'integrar',
+      description: 'Falha na autorização OAuth da Shopee (state ausente — possível CSRF)',
+      result: 'error',
+    });
+    return Response.redirect(`${redirectBase}?shopee=error&reason=state_ausente`, 302);
+  }
+
+  const stateValid = await consumeOAuthState(state, 'shopee');
+  if (!stateValid) {
+    await insertAuditRecord({
+      module: 'integrar',
+      description: 'Falha na autorização OAuth da Shopee (state inválido ou expirado)',
+      result: 'error',
+    });
+    return Response.redirect(`${redirectBase}?shopee=error&reason=state_invalido`, 302);
+  }
 
   if (!code || !shopId) {
     await insertAuditRecord({

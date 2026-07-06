@@ -5,7 +5,6 @@ import {
   ProductMonitor,
   OrderMonitor,
   UpdateIntegrationsResult,
-  ConciliationResult,
   IntegrationSource,
 } from '../../types';
 
@@ -30,22 +29,6 @@ export async function computeDivergences(): Promise<Divergence[]> {
 
 export async function fixDivergence(divergence: Divergence): Promise<{ ok: boolean; error?: string }> {
   return callEdgeFunction('reconcile', { action: 'fix_one', params: { divergenceId: divergence.id } });
-}
-
-export async function conciliarTodos(_divergences: Divergence[]): Promise<ConciliationResult> {
-  // The Edge Function re-reads current DB state — safer than the in-memory list.
-  void _divergences;
-  const res = await callEdgeFunction<{
-    ok: boolean;
-    updated: number;
-    ignored: number;
-    errors: number;
-    durationMs: number;
-    details: ConciliationResult['details'];
-    error?: string;
-  }>('reconcile', { action: 'conciliar_todos' });
-  if (!res.ok) throw new Error(res.error ?? 'Falha ao conciliar');
-  return { updated: res.updated, ignored: res.ignored, errors: res.errors, durationMs: res.durationMs, details: res.details };
 }
 
 // ─── Status das integrações ──────────────────────────────────────────────────
@@ -153,7 +136,7 @@ export async function getProductMonitorData(): Promise<ProductMonitor[]> {
       shopeeStock: sh?.stock ?? null,
       hasPhoto: p.hasPhoto,
       hasDescription: p.hasDescription,
-      hasVideo: false,
+      hasVideo: null,
       mlStatus: ml ? mapMlStatus(ml.status) : 'not_listed',
       shopeeStatus: sh ? mapShopeeStatus(sh.status) : 'not_listed',
     };
@@ -166,7 +149,26 @@ interface BlingOrderDTO {
   contato?: { nome?: string };
   total?: number;
   data?: string;
+  loja?: { id?: number; descricao?: string };
   situacao?: { id?: number; valor?: number };
+}
+
+function mapBlingOrderStatus(situacaoId?: number): OrderMonitor['status'] {
+  if (!situacaoId) return 'new';
+  // Bling v3 situação IDs: 6=Em aberto, 9=Atendido, 12=Cancelado, 15=Em andamento
+  // 24=Verificado, 87654=Em digitação (draft)
+  if ([12].includes(situacaoId)) return 'cancelled';
+  if ([9, 24].includes(situacaoId)) return 'completed';
+  if ([6, 15].includes(situacaoId)) return 'processing';
+  return 'new';
+}
+
+function mapBlingMarketplace(loja?: { id?: number; descricao?: string }): OrderMonitor['marketplace'] {
+  if (!loja?.descricao) return 'bling';
+  const name = loja.descricao.toLowerCase();
+  if (name.includes('mercado') || name.includes('meli') || name.includes('ml')) return 'mercadolivre';
+  if (name.includes('shopee')) return 'shopee';
+  return 'bling';
 }
 
 export async function getOrderMonitorData(): Promise<OrderMonitor[]> {
@@ -175,8 +177,8 @@ export async function getOrderMonitorData(): Promise<OrderMonitor[]> {
 
   return (res.data ?? []).map((o) => ({
     id: String(o.numero ?? o.id ?? ''),
-    marketplace: 'mercadolivre' as const,
-    status: 'new' as const,
+    marketplace: mapBlingMarketplace(o.loja),
+    status: mapBlingOrderStatus(o.situacao?.id),
     buyerName: o.contato?.nome ?? '—',
     total: Number(o.total ?? 0),
     createdAt: o.data ?? new Date().toISOString(),
