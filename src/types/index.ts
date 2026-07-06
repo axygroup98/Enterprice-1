@@ -1,5 +1,5 @@
 export type Priority = 'critical' | 'high' | 'medium' | 'informative';
-export type DivergenceType = 'stock' | 'title' | 'status' | 'photo' | 'description' | 'price' | 'orphan';
+export type DivergenceType = 'stock' | 'title' | 'status' | 'photo' | 'description' | 'price' | 'unlinked';
 export type Marketplace = 'mercadolivre' | 'shopee' | 'both';
 export type SyncStatus = 'success' | 'error' | 'partial';
 export type AuditResult = 'success' | 'error' | 'partial' | 'info';

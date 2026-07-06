@@ -1,6 +1,5 @@
 import { handleOptions, jsonResponse } from '../_shared/cors.ts';
-import { refreshIfNeeded, testConnection, getListings, updateStock, closeListing } from '../_shared/ml.ts';
-import { httpRequest } from '../_shared/http-client.ts';
+import { testConnection, getListings, updateStock, closeListing, reactivateListing } from '../_shared/ml.ts';
 
 Deno.serve(async (req: Request) => {
   const pre = handleOptions(req);
@@ -31,16 +30,7 @@ Deno.serve(async (req: Request) => {
 
   if (action === 'reactivate_listing') {
     const { itemId } = params as { itemId: string };
-    const auth = await refreshIfNeeded();
-    if ('error' in auth) return jsonResponse({ ok: false, error: auth.error, notConfigured: true });
-    const result = await httpRequest(`https://api.mercadolibre.com/items/${itemId}`, {
-      method: 'PUT',
-      headers: { Authorization: `Bearer ${auth.token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'active' }),
-      source: 'mercadolivre',
-      operation: 'reactivate_listing',
-    });
-    return jsonResponse({ ok: result.ok, error: result.error });
+    return jsonResponse(await reactivateListing(itemId));
   }
 
   return jsonResponse({ ok: false, error: `Ação desconhecida: ${action}` }, 400);

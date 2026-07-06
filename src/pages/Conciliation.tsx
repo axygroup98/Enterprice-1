@@ -17,7 +17,7 @@ const DIVERGENCE_TYPE_LABELS: Record<string, string> = {
   photo: 'Foto',
   description: 'Descrição',
   price: 'Preço',
-  orphan: 'Anúncio Fantasma',
+  unlinked: 'Sem Vínculo ERP',
 };
 
 
@@ -383,9 +383,10 @@ export function Conciliation() {
 
     let ok = 0; let err = 0; let skip = 0;
     for (const div of divs) {
-      if (div.divergence_type === 'photo' || div.divergence_type === 'description') {
+      if (div.divergence_type === 'photo' || div.divergence_type === 'description' || div.divergence_type === 'unlinked') {
         skip++;
-        setProgressSteps((prev) => prev.map((s) => s.id === div.id ? { ...s, status: 'success', detail: 'Ignorado (manual)' } : s));
+        const detail = div.divergence_type === 'unlinked' ? 'Sem vínculo ERP — ação manual necessária' : 'Ignorado (manual)';
+        setProgressSteps((prev) => prev.map((s) => s.id === div.id ? { ...s, status: 'success', detail } : s));
         continue;
       }
       setProgressSteps((prev) => prev.map((s) => s.id === div.id ? { ...s, status: 'running' } : s));
@@ -408,10 +409,11 @@ async function conciliarTodosWithProgress(
   const details: ConciliationResult['details'] = [];
 
   for (const div of divs) {
-    if (div.divergence_type === 'photo' || div.divergence_type === 'description') {
+    if (div.divergence_type === 'photo' || div.divergence_type === 'description' || div.divergence_type === 'unlinked') {
       ignored++;
-      onProgress(div.id, 'success', 'Ignorado (manual)');
-      details.push({ sku: div.sku, status: 'ignored', message: 'Requer ação manual' });
+      const msg = div.divergence_type === 'unlinked' ? 'Sem vínculo ERP — ação manual necessária' : 'Requer ação manual';
+      onProgress(div.id, 'success', msg);
+      details.push({ sku: div.sku, status: 'ignored', message: msg });
       continue;
     }
     onProgress(div.id, 'running');

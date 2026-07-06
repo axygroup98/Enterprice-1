@@ -1,9 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.57.4';
 
-// IMPORTANTE: este client usa a SERVICE_ROLE_KEY, que só existe no ambiente
-// de execução da Edge Function (nunca é enviada ao navegador). É o que
-// permite ler/escrever nas tabelas oauth_credentials e oauth_tokens, que
-// não têm nenhuma policy de RLS liberada para anon/authenticated.
 export function serviceClient() {
   const url = Deno.env.get('SUPABASE_URL')!;
   const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -41,7 +37,37 @@ export async function getTokens(source: string): Promise<OAuthTokens | null> {
 
 export async function saveTokens(source: string, fields: Partial<OAuthTokens>): Promise<void> {
   const db = serviceClient();
-  await db.from('oauth_tokens').upsert({ source, ...fields, updated_at: new Date().toISOString() }, { onConflict: 'source' });
+  await db.from('oauth_tokens').upsert(
+    { source, ...fields, updated_at: new Date().toISOString() },
+    { onConflict: 'source' }
+  );
+}
+
+// ─── OAuth state / CSRF ──────────────────────────────────────────────────────
+
+export async function storeOAuthState(state: string, source: string): Promise<void> {
+  const db = serviceClient();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 min TTL
+  await db.from('oauth_states').insert({ state, source, expires_at: expiresAt });
+}
+
+export async function consumeOAuthState(state: string, source: string): Promise<boolean> {
+  if (!state) return false;
+  const db = serviceClient();
+  const now = new Date().toISOString();
+  const { data } = await db
+    .from('oauth_states')
+    .select('state, source, expires_at')
+    .eq('state', state)
+    .eq('source', source)
+    .gt('expires_at', now)
+    .maybeSingle();
+  if (!data) return false;
+  // Consume (delete) the state token — one-time use
+  await db.from('oauth_states').delete().eq('state', state);
+  // Cleanup expired states opportunistically
+  await db.from('oauth_states').delete().lt('expires_at', now);
+  return true;
 }
 
 export async function insertSyncLog(entry: {

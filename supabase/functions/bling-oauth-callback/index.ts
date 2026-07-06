@@ -1,17 +1,14 @@
 import { handleOptions } from '../_shared/cors.ts';
-import { getCredentials, saveTokens, insertAuditRecord } from '../_shared/db.ts';
+import { getCredentials, saveTokens, insertAuditRecord, consumeOAuthState } from '../_shared/db.ts';
 import { httpRequest } from '../_shared/http-client.ts';
 
-// POST /Api/v3/oauth/token com Basic auth (base64 client_id:client_secret) e
-// grant_type=authorization_code&code=... — formato exato conforme
-// developer.bling.com.br/aplicativos. Feito inteiramente no servidor: o
-// client_secret nunca é enviado ao navegador.
 Deno.serve(async (req: Request) => {
   const pre = handleOptions(req);
   if (pre) return pre;
 
   const url = new URL(req.url);
   const code = url.searchParams.get('code');
+  const state = url.searchParams.get('state');
   const errorParam = url.searchParams.get('error');
 
   const creds = await getCredentials('bling');
@@ -25,7 +22,22 @@ Deno.serve(async (req: Request) => {
       result: 'error',
       details: { error: errorParam || 'code ausente' },
     });
-    return Response.redirect(`${redirectBase}?bling=error&reason=${encodeURIComponent(errorParam || 'code_ausente')}`, 302);
+    return Response.redirect(
+      `${redirectBase}?bling=error&reason=${encodeURIComponent(errorParam || 'code_ausente')}`,
+      302
+    );
+  }
+
+  // CSRF: validate state token
+  const stateValid = state ? await consumeOAuthState(state, 'bling') : false;
+  if (!stateValid) {
+    await insertAuditRecord({
+      module: 'integrar',
+      description: 'OAuth Bling rejeitado: state inválido ou expirado (possível CSRF)',
+      result: 'error',
+      details: { state },
+    });
+    return Response.redirect(`${redirectBase}?bling=error&reason=state_invalido`, 302);
   }
 
   if (!creds?.client_id || !creds?.client_secret) {

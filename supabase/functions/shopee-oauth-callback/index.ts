@@ -5,9 +5,6 @@ import { hmacSha256Hex } from '../_shared/shopee-sign.ts';
 
 const HOST = 'https://partner.shopeemobile.com';
 
-// Endpoint oficial /api/v2/auth/access_token/get, usado tanto para trocar o
-// code quanto para renovar via refresh_token. Assinatura para endpoints de
-// auth: sign = HMAC-SHA256(partner_key, partner_id + path + timestamp).
 Deno.serve(async (req: Request) => {
   const pre = handleOptions(req);
   if (pre) return pre;
@@ -21,7 +18,11 @@ Deno.serve(async (req: Request) => {
   const redirectBase = backTo || '/';
 
   if (!code || !shopId) {
-    await insertAuditRecord({ module: 'integrar', description: 'Falha na autorização OAuth da Shopee (code/shop_id ausente)', result: 'error' });
+    await insertAuditRecord({
+      module: 'integrar',
+      description: 'Falha na autorização OAuth da Shopee (code/shop_id ausente)',
+      result: 'error',
+    });
     return Response.redirect(`${redirectBase}?shopee=error&reason=code_ou_shop_ausente`, 302);
   }
 
@@ -39,14 +40,23 @@ Deno.serve(async (req: Request) => {
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, shop_id: Number(shopId), partner_id: Number(creds.client_id) }),
+      body: JSON.stringify({
+        code,
+        shop_id: Number(shopId),
+        partner_id: Number(creds.client_id),
+      }),
       source: 'shopee',
       operation: 'oauth_exchange',
     }
   );
 
   if (!result.ok || !result.data?.access_token) {
-    await insertAuditRecord({ module: 'integrar', description: 'Falha ao trocar code por token na Shopee', result: 'error', details: { error: result.error, response: result.data } });
+    await insertAuditRecord({
+      module: 'integrar',
+      description: 'Falha ao trocar code por token na Shopee',
+      result: 'error',
+      details: { error: result.error, response: result.data },
+    });
     return Response.redirect(`${redirectBase}?shopee=error&reason=troca_token_falhou`, 302);
   }
 
@@ -57,7 +67,12 @@ Deno.serve(async (req: Request) => {
     shop_id: shopId,
   });
 
-  await insertAuditRecord({ module: 'integrar', description: 'Shopee conectada com sucesso via OAuth', result: 'success', details: { shop_id: shopId } });
+  await insertAuditRecord({
+    module: 'integrar',
+    description: 'Shopee conectada com sucesso via OAuth',
+    result: 'success',
+    details: { shop_id: shopId },
+  });
 
   return Response.redirect(`${redirectBase}?shopee=connected`, 302);
 });

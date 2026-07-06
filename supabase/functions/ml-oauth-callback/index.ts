@@ -1,15 +1,14 @@
 import { handleOptions } from '../_shared/cors.ts';
-import { getCredentials, saveTokens, insertAuditRecord } from '../_shared/db.ts';
+import { getCredentials, saveTokens, insertAuditRecord, consumeOAuthState } from '../_shared/db.ts';
 import { httpRequest } from '../_shared/http-client.ts';
 
-// POST https://api.mercadolibre.com/oauth/token com grant_type=authorization_code
-// (developers.mercadolivre.com.br) — client_secret nunca sai do servidor.
 Deno.serve(async (req: Request) => {
   const pre = handleOptions(req);
   if (pre) return pre;
 
   const url = new URL(req.url);
   const code = url.searchParams.get('code');
+  const state = url.searchParams.get('state');
   const errorParam = url.searchParams.get('error');
 
   const creds = await getCredentials('mercadolivre');
@@ -17,8 +16,28 @@ Deno.serve(async (req: Request) => {
   const redirectBase = backTo || '/';
 
   if (errorParam || !code) {
-    await insertAuditRecord({ module: 'integrar', description: 'Falha na autorização OAuth do Mercado Livre', result: 'error', details: { error: errorParam } });
-    return Response.redirect(`${redirectBase}?ml=error&reason=${encodeURIComponent(errorParam || 'code_ausente')}`, 302);
+    await insertAuditRecord({
+      module: 'integrar',
+      description: 'Falha na autorização OAuth do Mercado Livre',
+      result: 'error',
+      details: { error: errorParam },
+    });
+    return Response.redirect(
+      `${redirectBase}?ml=error&reason=${encodeURIComponent(errorParam || 'code_ausente')}`,
+      302
+    );
+  }
+
+  // CSRF: validate state token
+  const stateValid = state ? await consumeOAuthState(state, 'mercadolivre') : false;
+  if (!stateValid) {
+    await insertAuditRecord({
+      module: 'integrar',
+      description: 'OAuth Mercado Livre rejeitado: state inválido ou expirado (possível CSRF)',
+      result: 'error',
+      details: { state },
+    });
+    return Response.redirect(`${redirectBase}?ml=error&reason=state_invalido`, 302);
   }
 
   if (!creds?.client_id || !creds?.client_secret || !creds?.redirect_uri) {
@@ -45,7 +64,12 @@ Deno.serve(async (req: Request) => {
   });
 
   if (!result.ok || !result.data?.access_token) {
-    await insertAuditRecord({ module: 'integrar', description: 'Falha ao trocar code por token no Mercado Livre', result: 'error', details: { error: result.error, response: result.data } });
+    await insertAuditRecord({
+      module: 'integrar',
+      description: 'Falha ao trocar code por token no Mercado Livre',
+      result: 'error',
+      details: { error: result.error, response: result.data },
+    });
     return Response.redirect(`${redirectBase}?ml=error&reason=troca_token_falhou`, 302);
   }
 
@@ -56,7 +80,12 @@ Deno.serve(async (req: Request) => {
     shop_id: String(result.data.user_id),
   });
 
-  await insertAuditRecord({ module: 'integrar', description: 'Mercado Livre conectado com sucesso via OAuth', result: 'success', details: { user_id: result.data.user_id } });
+  await insertAuditRecord({
+    module: 'integrar',
+    description: 'Mercado Livre conectado com sucesso via OAuth',
+    result: 'success',
+    details: { user_id: result.data.user_id },
+  });
 
   return Response.redirect(`${redirectBase}?ml=connected`, 302);
 });

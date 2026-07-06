@@ -52,7 +52,7 @@ export function Analyze({ onNavigate }: Props) {
       const noDesc = products.filter((p) => !p.hasDescription);
       const stoppedOrders = orders.filter((o) => o.status === 'stopped');
       const pausedListings = products.filter((p) => p.mlStatus === 'paused' && p.erpStock > 0);
-      const orphanListings = divs.filter((d) => d.divergence_type === 'orphan');
+      const unlinkedListings = divs.filter((d) => d.divergence_type === 'unlinked');
       const zeroStockActive = products.filter((p) => p.mlStock === 0 && p.mlStatus === 'active');
 
       const result: AnalysisCard[] = [
@@ -121,17 +121,17 @@ export function Analyze({ onNavigate }: Props) {
           actionPage: 'conciliacao',
         },
         {
-          id: 'orphan-listings',
+          id: 'unlinked-listings',
           icon: AlertTriangle,
-          title: 'Anúncios sem Produto no ERP',
-          count: orphanListings.length,
-          description: 'Produtos anunciados nos marketplaces que não existem no ERP',
-          severity: orphanListings.length > 0 ? 'critical' : 'neutral',
-          items: orphanListings.map((d) => ({
+          title: 'Anúncios sem Vínculo no ERP',
+          count: unlinkedListings.length,
+          description: 'Anúncios nos marketplaces sem SKU vinculado ao ERP — requerem revisão manual',
+          severity: unlinkedListings.length > 0 ? 'critical' : 'neutral',
+          items: unlinkedListings.map((d) => ({
             label: d.product_name,
             detail: `SKU: ${d.sku} | Canal: ${d.marketplace === 'mercadolivre' ? 'Mercado Livre' : 'Shopee'}`,
           })),
-          actionLabel: 'Corrigir',
+          actionLabel: 'Revisar na Conciliação',
           actionPage: 'conciliacao',
         },
         {

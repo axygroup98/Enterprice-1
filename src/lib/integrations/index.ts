@@ -17,9 +17,6 @@ const SOURCE_LABELS: Record<IntegrationSource, string> = {
 };
 
 // ─── Conciliação ─────────────────────────────────────────────────────────────
-// Todo o cálculo de divergências agora acontece na Edge Function `reconcile`,
-// que busca dados reais no Bling/ML/Shopee (nunca mock) e usa o ERP como
-// fonte da verdade, conforme o princípio 01 do documento estratégico.
 export async function computeDivergences(): Promise<Divergence[]> {
   const res = await callEdgeFunction<{ ok: boolean; data?: Divergence[]; notConfigured?: string[]; error?: string }>(
     'reconcile',
@@ -36,18 +33,22 @@ export async function fixDivergence(divergence: Divergence): Promise<{ ok: boole
 }
 
 export async function conciliarTodos(_divergences: Divergence[]): Promise<ConciliationResult> {
-  // A Edge Function relê o estado atual do banco (mais seguro que confiar na
-  // lista que o navegador tinha em memória, que pode estar desatualizada).
+  // The Edge Function re-reads current DB state — safer than the in-memory list.
   void _divergences;
-  const res = await callEdgeFunction<{ ok: boolean; updated: number; ignored: number; errors: number; durationMs: number; details: ConciliationResult['details']; error?: string }>(
-    'reconcile',
-    { action: 'conciliar_todos' }
-  );
+  const res = await callEdgeFunction<{
+    ok: boolean;
+    updated: number;
+    ignored: number;
+    errors: number;
+    durationMs: number;
+    details: ConciliationResult['details'];
+    error?: string;
+  }>('reconcile', { action: 'conciliar_todos' });
   if (!res.ok) throw new Error(res.error ?? 'Falha ao conciliar');
   return { updated: res.updated, ignored: res.ignored, errors: res.errors, durationMs: res.durationMs, details: res.details };
 }
 
-// ─── Status das integrações (Admin / Dashboard / Integrar) ──────────────────
+// ─── Status das integrações ──────────────────────────────────────────────────
 interface StatusRow {
   source: IntegrationSource;
   configured: boolean;
@@ -77,14 +78,38 @@ export async function updateAllIntegrations(): Promise<UpdateIntegrationsResult>
 }
 
 // ─── Monitor (produtos e pedidos) ────────────────────────────────────────────
-interface BlingProductDTO { id: string; sku: string; name: string; stock: number; hasPhoto: boolean; hasDescription: boolean }
-interface MLListingDTO { itemId: string; sku: string; title: string; stock: number; status: string }
-interface ShopeeListingDTO { itemId: number; sku: string; name: string; stock: number; status: string }
+interface BlingProductDTO {
+  id: string;
+  sku: string;
+  name: string;
+  stock: number;
+  hasPhoto: boolean;
+  hasDescription: boolean;
+}
+
+interface MLListingDTO {
+  itemId: string;
+  sku: string;
+  hasSkuAttribute: boolean;
+  title: string;
+  stock: number;
+  status: string;
+}
+
+interface ShopeeListingDTO {
+  itemId: number;
+  sku: string;
+  hasSkuAttribute: boolean;
+  name: string;
+  stock: number;
+  status: string;
+}
 
 function mapMlStatus(status: string): ProductMonitor['mlStatus'] {
   if (status === 'active' || status === 'paused' || status === 'closed') return status;
   return 'not_listed';
 }
+
 function mapShopeeStatus(status: string): ProductMonitor['shopeeStatus'] {
   if (status === 'NORMAL') return 'active';
   if (status === 'UNLIST') return 'paused';
@@ -100,17 +125,26 @@ export async function getProductMonitorData(): Promise<ProductMonitor[]> {
   ]);
 
   if (!blingRes.ok) {
-    // O Bling é o ERP / fonte oficial: sem ele não existe "monitor de produtos" confiável.
     throw new Error(blingRes.error ?? 'Integração não configurada.');
   }
 
   const products = blingRes.data ?? [];
-  const mlMap = new Map((mlRes.ok ? mlRes.data ?? [] : []).map((l) => [l.sku, l]));
-  const shMap = new Map((shopeeRes.ok ? shopeeRes.data ?? [] : []).map((l) => [l.sku, l]));
+
+  // Only include listings that have a confirmed SKU attribute — never use item ID as SKU
+  const mlMap = new Map(
+    (mlRes.ok ? mlRes.data ?? [] : [])
+      .filter((l) => l.hasSkuAttribute && l.sku.trim() !== '')
+      .map((l) => [l.sku.trim(), l])
+  );
+  const shMap = new Map(
+    (shopeeRes.ok ? shopeeRes.data ?? [] : [])
+      .filter((l) => l.hasSkuAttribute && l.sku.trim() !== '')
+      .map((l) => [l.sku.trim(), l])
+  );
 
   return products.map((p) => {
-    const ml = mlMap.get(p.sku);
-    const sh = shMap.get(p.sku);
+    const ml = mlMap.get(p.sku.trim());
+    const sh = shMap.get(p.sku.trim());
     return {
       sku: p.sku,
       name: p.name,
@@ -119,9 +153,6 @@ export async function getProductMonitorData(): Promise<ProductMonitor[]> {
       shopeeStock: sh?.stock ?? null,
       hasPhoto: p.hasPhoto,
       hasDescription: p.hasDescription,
-      // O Bling v3 /produtos não retorna vídeo de forma confiável sem uma
-      // chamada extra (mídia do anúncio); deixado como false até validarmos
-      // esse campo com uma conta real, em vez de inventar um valor.
       hasVideo: false,
       mlStatus: ml ? mapMlStatus(ml.status) : 'not_listed',
       shopeeStatus: sh ? mapShopeeStatus(sh.status) : 'not_listed',
@@ -142,13 +173,6 @@ export async function getOrderMonitorData(): Promise<OrderMonitor[]> {
   const res = await callEdgeFunction<{ ok: boolean; data?: BlingOrderDTO[]; error?: string }>('bling-api', { action: 'get_orders' });
   if (!res.ok) throw new Error(res.error ?? 'Integração não configurada.');
 
-  // ATENÇÃO: o Bling representa a situação do pedido por um código numérico
-  // (situacao.id) próprio de cada conta/fluxo cadastrado. Não temos acesso a
-  // uma conta real para confirmar quais códigos correspondem a "Novo",
-  // "Pago", "Aguardando NF", etc. Em vez de inventar esse mapeamento,
-  // devolvemos o pedido com status "new" e os dados brutos preservados —
-  // ajuste esta função assim que os códigos da conta real forem
-  // confirmados (ver AUDITORIA.md).
   return (res.data ?? []).map((o) => ({
     id: String(o.numero ?? o.id ?? ''),
     marketplace: 'mercadolivre' as const,

@@ -13,6 +13,15 @@ export interface BlingProduct {
   hasDescription: boolean;
 }
 
+export interface BlingOrder {
+  id?: string | number;
+  numero?: string | number;
+  contato?: { nome?: string };
+  total?: number;
+  data?: string;
+  situacao?: { id?: number; valor?: number };
+}
+
 export type AuthResult = { token: string } | { error: string };
 
 export async function refreshIfNeeded(): Promise<AuthResult> {
@@ -22,17 +31,25 @@ export async function refreshIfNeeded(): Promise<AuthResult> {
   const expiresAt = tokens.expires_at ? new Date(tokens.expires_at).getTime() : 0;
   if (expiresAt - Date.now() > 60_000) return { token: tokens.access_token };
 
-  if (!tokens.refresh_token) return { error: 'Token do Bling expirado e sem refresh_token. Refaça a conexão OAuth.' };
+  if (!tokens.refresh_token) {
+    return { error: 'Token do Bling expirado e sem refresh_token. Refaça a conexão OAuth.' };
+  }
 
   const creds = await getCredentials('bling');
-  if (!creds?.client_id || !creds?.client_secret) return { error: 'Credenciais do Bling não configuradas.' };
+  if (!creds?.client_id || !creds?.client_secret) {
+    return { error: 'Credenciais do Bling não configuradas.' };
+  }
 
   const basic = btoa(`${creds.client_id}:${creds.client_secret}`);
   const result = await httpRequest<{ access_token: string; refresh_token: string; expires_in: number }>(
     `${API_BASE}/oauth/token`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: '1.0', Authorization: `Basic ${basic}` },
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Accept: '1.0',
+        Authorization: `Basic ${basic}`,
+      },
       body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(tokens.refresh_token)}`,
       source: 'bling',
       operation: 'oauth_refresh',
@@ -55,7 +72,10 @@ export async function refreshIfNeeded(): Promise<AuthResult> {
 export async function testConnection(): Promise<{ ok: boolean; ms: number; error?: string }> {
   const auth = await refreshIfNeeded();
   if ('error' in auth) return { ok: false, ms: 0, error: auth.error };
-  const result = await httpRequest(`${API_BASE}/produtos?limite=1`, { headers: { Authorization: `Bearer ${auth.token}` }, source: 'bling', operation: 'test_connection' });
+  const result = await httpRequest(
+    `${API_BASE}/produtos?limite=1`,
+    { headers: { Authorization: `Bearer ${auth.token}` }, source: 'bling', operation: 'test_connection' }
+  );
   return { ok: result.ok, ms: result.ms, error: result.error };
 }
 
@@ -63,32 +83,71 @@ export async function getProducts(): Promise<{ ok: true; data: BlingProduct[] } 
   const auth = await refreshIfNeeded();
   if ('error' in auth) return { ok: false, error: auth.error };
 
-  const result = await httpRequest<{ data: Array<Record<string, unknown>> }>(
-    `${API_BASE}/produtos?limite=100&pagina=1`,
-    { headers: { Authorization: `Bearer ${auth.token}` }, source: 'bling', operation: 'get_products' }
-  );
-  if (!result.ok) return { ok: false, error: result.error ?? 'erro desconhecido' };
+  const allProducts: BlingProduct[] = [];
+  let pagina = 1;
+  const limite = 100;
 
-  // ATENÇÃO: os nomes de campo abaixo (codigo, descricao, preco, imagens,
-  // descricaoComplementar) seguem o padrão documentado do recurso /produtos
-  // da API v3, mas o campo de estoque disponível pode vir aninhado
-  // (ex: objeto "estoque") dependendo do plano/conta Bling. Antes de ir para
-  // produção, confirme o schema exato com uma chamada real autenticada
-  // (Testar Conexão) e ajuste o mapeamento abaixo se necessário — não fiz
-  // suposição adicional aqui para não arriscar mapear estoque errado.
-  const items = result.data?.data ?? [];
-  const products: BlingProduct[] = items.map((p) => {
-    const estoqueField = p.estoque as { saldoVirtualTotal?: number } | undefined;
-    const stock = Number((p as { estoqueAtual?: number }).estoqueAtual ?? estoqueField?.saldoVirtualTotal ?? 0);
-    return {
-      id: String(p.id ?? ''),
-      sku: String(p.codigo ?? ''),
-      name: String(p.descricao ?? ''),
-      stock,
-      price: Number(p.preco ?? 0),
-      hasPhoto: Array.isArray(p.imagens) && (p.imagens as unknown[]).length > 0,
-      hasDescription: Boolean(p.descricaoComplementar),
-    };
-  });
-  return { ok: true, data: products };
+  while (true) {
+    const result = await httpRequest<{ data: Array<Record<string, unknown>> }>(
+      `${API_BASE}/produtos?limite=${limite}&pagina=${pagina}&criterio=1`,
+      { headers: { Authorization: `Bearer ${auth.token}` }, source: 'bling', operation: 'get_products' }
+    );
+
+    if (!result.ok) return { ok: false, error: result.error ?? 'erro desconhecido' };
+
+    const items = result.data?.data ?? [];
+    if (items.length === 0) break;
+
+    for (const p of items) {
+      const estoqueField = p.estoque as { saldoVirtualTotal?: number } | undefined;
+      const stock = Number(
+        (p as { estoqueAtual?: number }).estoqueAtual ??
+        estoqueField?.saldoVirtualTotal ??
+        0
+      );
+      allProducts.push({
+        id: String(p.id ?? ''),
+        sku: String(p.codigo ?? ''),
+        name: String(p.descricao ?? ''),
+        stock,
+        price: Number(p.preco ?? 0),
+        hasPhoto: Array.isArray(p.imagens) && (p.imagens as unknown[]).length > 0,
+        hasDescription: Boolean(p.descricaoComplementar),
+      });
+    }
+
+    // Bling returns up to `limite` items; fewer means last page
+    if (items.length < limite) break;
+    pagina++;
+  }
+
+  return { ok: true, data: allProducts };
+}
+
+export async function getOrders(): Promise<{ ok: true; data: BlingOrder[] } | { ok: false; error: string }> {
+  const auth = await refreshIfNeeded();
+  if ('error' in auth) return { ok: false, error: auth.error };
+
+  const allOrders: BlingOrder[] = [];
+  let pagina = 1;
+  const limite = 100;
+
+  while (true) {
+    const result = await httpRequest<{ data: Array<Record<string, unknown>> }>(
+      `${API_BASE}/pedidos/vendas?limite=${limite}&pagina=${pagina}`,
+      { headers: { Authorization: `Bearer ${auth.token}` }, source: 'bling', operation: 'get_orders' }
+    );
+
+    if (!result.ok) return { ok: false, error: result.error ?? 'erro desconhecido' };
+
+    const items = result.data?.data ?? [];
+    if (items.length === 0) break;
+
+    allOrders.push(...(items as BlingOrder[]));
+
+    if (items.length < limite) break;
+    pagina++;
+  }
+
+  return { ok: true, data: allOrders };
 }

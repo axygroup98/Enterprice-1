@@ -5,7 +5,8 @@ const API_BASE = 'https://api.mercadolibre.com';
 
 export interface MLListing {
   itemId: string;
-  sku: string;
+  sku: string;          // SELLER_SKU attribute; empty string if absent
+  hasSkuAttribute: boolean;
   title: string;
   stock: number;
   status: 'active' | 'paused' | 'closed';
@@ -18,13 +19,25 @@ export async function refreshIfNeeded(): Promise<AuthResult> {
   if (!tokens?.access_token) return { error: 'Integração não configurada.' };
 
   const expiresAt = tokens.expires_at ? new Date(tokens.expires_at).getTime() : 0;
-  if (expiresAt - Date.now() > 60_000) return { token: tokens.access_token, sellerId: tokens.shop_id ?? '' };
+  if (expiresAt - Date.now() > 60_000) {
+    return { token: tokens.access_token, sellerId: tokens.shop_id ?? '' };
+  }
 
-  if (!tokens.refresh_token) return { error: 'Token do Mercado Livre expirado e sem refresh_token. Refaça a conexão OAuth.' };
+  if (!tokens.refresh_token) {
+    return { error: 'Token do Mercado Livre expirado e sem refresh_token. Refaça a conexão OAuth.' };
+  }
+
   const creds = await getCredentials('mercadolivre');
-  if (!creds?.client_id || !creds?.client_secret) return { error: 'Credenciais do Mercado Livre não configuradas.' };
+  if (!creds?.client_id || !creds?.client_secret) {
+    return { error: 'Credenciais do Mercado Livre não configuradas.' };
+  }
 
-  const result = await httpRequest<{ access_token: string; refresh_token: string; expires_in: number; user_id: number }>(
+  const result = await httpRequest<{
+    access_token: string;
+    refresh_token: string;
+    expires_in: number;
+    user_id: number;
+  }>(
     `${API_BASE}/oauth/token`,
     {
       method: 'POST',
@@ -57,40 +70,68 @@ export async function refreshIfNeeded(): Promise<AuthResult> {
 export async function testConnection(): Promise<{ ok: boolean; ms: number; error?: string }> {
   const auth = await refreshIfNeeded();
   if ('error' in auth) return { ok: false, ms: 0, error: auth.error };
-  const result = await httpRequest(`${API_BASE}/users/me`, { headers: { Authorization: `Bearer ${auth.token}` }, source: 'mercadolivre', operation: 'test_connection' });
+  const result = await httpRequest(
+    `${API_BASE}/users/me`,
+    { headers: { Authorization: `Bearer ${auth.token}` }, source: 'mercadolivre', operation: 'test_connection' }
+  );
   return { ok: result.ok, ms: result.ms, error: result.error };
 }
 
+// Fetches ALL listing IDs via scroll/offset pagination, then batch-fetches details
+// in chunks of 20 (ML multiget limit).
 export async function getListings(): Promise<{ ok: true; data: MLListing[] } | { ok: false; error: string }> {
   const auth = await refreshIfNeeded();
   if ('error' in auth) return { ok: false, error: auth.error };
   const headers = { Authorization: `Bearer ${auth.token}` };
 
-  const searchRes = await httpRequest<{ results: string[] }>(
-    `${API_BASE}/users/${auth.sellerId}/items/search?limit=100`,
-    { headers, source: 'mercadolivre', operation: 'get_listings' }
-  );
-  if (!searchRes.ok) return { ok: false, error: searchRes.error ?? 'erro desconhecido' };
-  const ids = searchRes.data?.results ?? [];
-  if (!ids.length) return { ok: true, data: [] };
+  // Step 1: collect all item IDs via paginated search
+  const allIds: string[] = [];
+  const limit = 100;
+  let offset = 0;
 
-  const detailRes = await httpRequest<Array<{ body: Record<string, unknown> }>>(
-    `${API_BASE}/items?ids=${ids.slice(0, 20).join(',')}`,
-    { headers, source: 'mercadolivre', operation: 'get_listings_detail' }
-  );
-  if (!detailRes.ok) return { ok: false, error: detailRes.error ?? 'erro desconhecido' };
+  while (true) {
+    const searchRes = await httpRequest<{ results: string[]; paging: { total: number; offset: number; limit: number } }>(
+      `${API_BASE}/users/${auth.sellerId}/items/search?limit=${limit}&offset=${offset}`,
+      { headers, source: 'mercadolivre', operation: 'get_listings_ids' }
+    );
+    if (!searchRes.ok) return { ok: false, error: searchRes.error ?? 'erro desconhecido' };
 
-  const listings: MLListing[] = (detailRes.data ?? []).map(({ body: b }) => {
-    const attrs = (b.attributes as Array<{ id: string; value_name: string }>) ?? [];
-    const skuAttr = attrs.find((a) => a.id === 'SELLER_SKU');
-    return {
-      itemId: String(b.id ?? ''),
-      sku: skuAttr?.value_name ?? String(b.id ?? ''),
-      title: String(b.title ?? ''),
-      stock: Number(b.available_quantity ?? 0),
-      status: String(b.status ?? 'closed') as MLListing['status'],
-    };
-  });
+    const ids = searchRes.data?.results ?? [];
+    allIds.push(...ids);
+
+    const total = searchRes.data?.paging?.total ?? 0;
+    offset += ids.length;
+    if (offset >= total || ids.length === 0) break;
+  }
+
+  if (allIds.length === 0) return { ok: true, data: [] };
+
+  // Step 2: batch-fetch details in chunks of 20 (ML API limit for multiget)
+  const listings: MLListing[] = [];
+  const CHUNK_SIZE = 20;
+
+  for (let i = 0; i < allIds.length; i += CHUNK_SIZE) {
+    const chunk = allIds.slice(i, i + CHUNK_SIZE);
+    const detailRes = await httpRequest<Array<{ body: Record<string, unknown> }>>(
+      `${API_BASE}/items?ids=${chunk.join(',')}`,
+      { headers, source: 'mercadolivre', operation: 'get_listings_detail' }
+    );
+    if (!detailRes.ok) return { ok: false, error: detailRes.error ?? 'erro desconhecido' };
+
+    for (const { body: b } of detailRes.data ?? []) {
+      const attrs = (b.attributes as Array<{ id: string; value_name: string }>) ?? [];
+      const skuAttr = attrs.find((a) => a.id === 'SELLER_SKU');
+      listings.push({
+        itemId: String(b.id ?? ''),
+        sku: skuAttr?.value_name ?? '',
+        hasSkuAttribute: Boolean(skuAttr?.value_name),
+        title: String(b.title ?? ''),
+        stock: Number(b.available_quantity ?? 0),
+        status: String(b.status ?? 'closed') as MLListing['status'],
+      });
+    }
+  }
+
   return { ok: true, data: listings };
 }
 
@@ -116,6 +157,19 @@ export async function closeListing(itemId: string): Promise<{ ok: boolean; error
     body: JSON.stringify({ status: 'closed' }),
     source: 'mercadolivre',
     operation: 'close_listing',
+  });
+  return { ok: result.ok, error: result.error };
+}
+
+export async function reactivateListing(itemId: string): Promise<{ ok: boolean; error?: string }> {
+  const auth = await refreshIfNeeded();
+  if ('error' in auth) return { ok: false, error: auth.error };
+  const result = await httpRequest(`${API_BASE}/items/${itemId}`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${auth.token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'active' }),
+    source: 'mercadolivre',
+    operation: 'reactivate_listing',
   });
   return { ok: result.ok, error: result.error };
 }
